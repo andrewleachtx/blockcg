@@ -21,7 +21,7 @@ mkdir -p "$DATA_DIR"
 URL="https://suitesparse-collection-website.herokuapp.com/MM/${GROUP_NAME}.tar.gz"
 
 echo "Downloading ${GROUP_NAME} from SuiteSparse..."
-TMPFILE=$(mktemp /tmp/spmm_mtx_XXXXXX.tar.gz)
+TMPFILE=$(mktemp /tmp/blockcg_mtx_XXXXXX.tar.gz)
 trap "rm -f $TMPFILE" EXIT
 
 curl -fSL "$URL" -o "$TMPFILE"

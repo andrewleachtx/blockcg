@@ -1,7 +1,5 @@
 # Block Conjugate Gradient for Multiple RHS
 
-We used WSL2 for this project.
-
 Be sure submodules are pulled (Eigen).
 ```sh
 git submodule update --init --recursive
@@ -21,14 +19,8 @@ You can use real sparse matrices from [SuiteSparse](https://sparse.tamu.edu/) se
 You can test a download with:
 
 ```sh
-./build/spmm data/<group>/<name> <ncols in B>
-./build/spmm data/audikw_1/audikw_1.mtx 128
-```
-
-To run all data downloaded in `data/` and store in a text file:
-
-```sh
-./scripts/bench_mtx_all.sh > test.txt
+./build/blockcg cg data/<name>/<name>.mtx
+./build/blockcg cg data/audikw_1/audikw_1.mtx
 ```
 
 ### Downloading
