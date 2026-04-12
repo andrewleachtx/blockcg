@@ -3,6 +3,7 @@ project(blockcg LANGUAGES C CXX)
 
 add_executable(blockcg
     src/main.cpp
+    src/solvers.cpp
     src/matrix_market.cpp
     vendor/mmio/mmio.c
 )
