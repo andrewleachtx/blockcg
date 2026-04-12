@@ -39,20 +39,39 @@ int main(int argc, char** argv) {
         std::cout << "Matrix: " << A.rows() << "x" << A.cols() << ", "
                   << A.nonZeros() << " nonzeros\n";
 
-        //silly lil run with some prints to show it works
-        const Eigen::VectorXd b = Eigen::VectorXd::Ones(A.cols()); // or load your rhs
-        Eigen::SparseMatrix<double> I(A.cols(), A.cols());
-        I.setIdentity();
-        const Eigen::VectorXd x = cg_solve(A, b, I);
-        std::cout << "CG solution norm: " << x.norm() << '\n';
-        for (int i=0; i<10;i++) {
-            std::cout << "value "<< i << ": " << x[i] << '\n';
+        if (mode == "cg") {
+    //silly lil run with some prints to show it works
+            const Eigen::VectorXd b = Eigen::VectorXd::Ones(A.cols()); // or load your rhs
+            Eigen::SparseMatrix<double> I(A.cols(), A.cols());
+            I.setIdentity();
+            const Eigen::VectorXd x = cg_solve(A, b, I);
+            std::cout << "CG solution norm: " << x.norm() << '\n';
+            for (int i=0; i<10;i++) {
+                std::cout << "value "<< i << ": " << x[i] << '\n';
+            }
+            Eigen::VectorXd calc_b = A*x;
+            std::cout << "computed b";
+            for (int i=0; i<10;i++) {
+                std::cout << "value "<< i << ": " << calc_b[i] << '\n';
+            }
         }
-        Eigen::VectorXd calc_b = A*x;
-        std::cout << "computed b";
-        for (int i=0; i<10;i++) {
-            std::cout << "value "<< i << ": " << calc_b[i] << '\n';
+
+        if (mode == "bcg") {
+            // Block CG with m=3 right hand sides
+            int m = 3;
+            const Eigen::MatrixXd B = Eigen::MatrixXd::Random(A.cols(), m);
+            const Eigen::MatrixXd X = solve_bcg(A, B, 1e-6);
+            std::cout << "BCG error norm: " << (A*X-B).norm() << '\n';
+            for (int i = 0; i < 10; i++) {
+                std::cout << "row " << i << ": " << X.row(i) << '\n';
+            }
+            Eigen::MatrixXd calc_B = A * X;
+            std::cout << "computed B:\n";
+            for (int i = 0; i < 10; i++) {
+                std::cout << "row " << i << ": " << calc_B.row(i) << '\n';
+            }
         }
+        
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';

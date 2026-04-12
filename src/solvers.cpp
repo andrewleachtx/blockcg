@@ -2,11 +2,40 @@
 using namespace Eigen;
 
 // Based on Algorithm 2
-void solve_cg_per_b(const Eigen::SparseMatrix<double>& A,
-                    const Eigen::MatrixXd& B, const Eigen::VectorXd x0) { /*TODO*/     (void)A; (void)B; (void)x0; }
+void solve_cg_per_b(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, double tol) { //, const Eigen::MatrixXd& x0
+ /*TODO*/    (void)A; (void)B; (void)tol;
+    
+}
 // Based on Algorithm 4
-void solve_bcg(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B,
-               const Eigen::VectorXd x0) {   /*TODO*/    (void)A; (void)B; (void)x0; }
+/// no preconditioning
+MatrixXd solve_bcg(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, double tol) { //, const Eigen::MatrixXd& x0
+                
+    int n = A.cols();
+    int m = B.cols();    
+    ///k=0
+    MatrixXd x_k = MatrixXd::Zero(n, m);
+    MatrixXd r_k = B-A*x_k;
+    // phi = I: Hestenes and Stiefel version. Choosing a better phi can avoid breakdown in rank deficient cases 
+    MatrixXd phi_k = MatrixXd::Identity(m, m);
+    MatrixXd p_k = r_k*phi_k;
+    // TODO why is this justified
+    while (r_k.squaredNorm() > tol * tol * B.squaredNorm()) {
+        //step size matrix mxm because coupling along search directions
+        // solve is more efficient than inverting
+        MatrixXd r_km1 = r_k;
+        MatrixXd gamma_k = (p_k.transpose() * A * p_k).lu().solve(phi_k.transpose() * r_km1.transpose() * r_km1); 
+        // update x_k
+        x_k = x_k +p_k*gamma_k;
+        /// update residual
+        r_k = r_k - A*p_k*gamma_k;
+        //compute next search directions
+        MatrixXd rtr_km1 = r_km1.transpose() * r_km1;          // m×m
+        MatrixXd rtr_k   = r_k.transpose() * r_k;               // m×m
+        MatrixXd delta_k = phi_k.lu().solve(rtr_km1.lu().solve(rtr_k));
+        p_k = (r_k + p_k*delta_k)*phi_k;
+    }
+    return x_k;
+}
 
 // Not block at all - b is a single vector
 VectorXd cg_solve(const Eigen::SparseMatrix<double>& A, const VectorXd& b, const Eigen::SparseMatrix<double>& M_inv, double tol) {
