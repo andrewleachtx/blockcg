@@ -18,7 +18,6 @@ MatrixXd solve_bcg(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& 
     // phi = I: Hestenes and Stiefel version. Choosing a better phi can avoid breakdown in rank deficient cases 
     MatrixXd phi_k = MatrixXd::Identity(m, m);
     MatrixXd p_k = r_k*phi_k;
-    // TODO why is this justified
     while (r_k.squaredNorm() > tol * tol * B.squaredNorm()) {
         //step size matrix mxm because coupling along search directions
         // solve is more efficient than inverting
