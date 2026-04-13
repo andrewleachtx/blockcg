@@ -15,6 +15,8 @@ solve_cg_per_b(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, d
 Eigen::MatrixXd
 solve_bcg(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, double tol);
 
+// input: A, b, x0, M = LL^T
 Eigen::MatrixXd solve_preconditioned_bcg(
-    const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, double tol
+    const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, const Eigen::MatrixXd& X_0,
+    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& LLT
 );

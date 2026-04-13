@@ -9,9 +9,9 @@ VectorXd cg_solve(
     const int n = A.cols();
 
     // Setup
-    VectorXd x_k = VectorXd::Zero(n);                 // current guess
-    VectorXd r_k = b - A * x_k;                       // current residual, always b - Ax_k
-    VectorXd h_k = M_inv * r_k;                       // preconditioned residual
+    VectorXd x_k = VectorXd::Zero(n); // current guess
+    VectorXd r_k = b - A * x_k; // current residual, always b - Ax_k
+    VectorXd h_k = M_inv * r_k; // preconditioned residual
     double delta_0 = (r_k.transpose() * h_k).value(); // basically r_k dot preconditioned r_k
     double delta_k = delta_0;
     VectorXd p_k = h_k; // current search direction
@@ -28,7 +28,7 @@ VectorXd cg_solve(
         // such that we should take smaller steps here. Note that if p_k and s_k were
         // at a 90 degree angle, this would be a big difference, and cause a zero.
         // But this is supposed to be positive definite, and that would be a violation:
-        // x^T Ax > 0 is the requirement.
+        // x^T Ax > 0 is te definition of positive definiteness.
         double alpha_k = delta_k / (p_k.transpose() * s_k).value();
 
         // Apply step, x_{k+1} = x_k + step size * search direction
@@ -44,7 +44,7 @@ VectorXd cg_solve(
         // r_k is the negative gradient, and thus iterating based on it would
         // try to take us straight to the path of minimizing error. The idea is
         // the preconditioner (idk how) gives us more information about our optimization
-        // step, so that we do not zigzag
+        // step, so that we do not zigzag or something like that
         VectorXd h_kp1 = M_inv * r_kp1;
 
         // Update err
@@ -141,11 +141,75 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
     return x_k;
 }
 
-// Based on Alg. 7: Preconditioned DR-BCG
-MatrixXd solve_preconditioned_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
+// We can get Z = Q * R
+static void compute_qr(const MatrixXd& Z, MatrixXd& Q, MatrixXd& R)
 {
-    const int n = A.rows();
-    const int m = B.cols();
+    const int n = Z.rows();
+    const int m = Z.cols();
 
-    // Algorithm 4 can let us
+    Eigen::HouseholderQR<MatrixXd> qr(Z);
+
+    Q = qr.householderQ() * MatrixXd::Identity(n, m);
+    R = qr.matrixQR().topLeftCorner(m, m).triangularView<Eigen::Upper>();
+}
+
+// Based on Alg. 7: Preconditioned DR-BCG
+Eigen::MatrixXd solve_preconditioned_bcg(
+    const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, const Eigen::MatrixXd& X_0,
+    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& LLT
+)
+{
+    SparseMatrix<double> L = LLT.matrixL();
+
+    // Algorithm 4 can be implemented with a preconditioner, but this is a different approach.
+    // First off, M = LL^T requires a Cholesky factorized preconditioner, which is also SPD.
+    // Instead of doing M^{-1} we will do L^-1 and L^{-T} solves.
+    // Thus M^{-1} = (LL^T)^{-1} = L^{-T} * L^{-1}, which is why we pass this weird Eigen
+    // object that can store a LLT
+
+    // (2) Initial residual r_k is a matrix of n x m
+    MatrixXd R_k = B - A * X_0;
+
+    // (3) [w_0, sigma_0] = qr(L^{-1} R_0)
+    // w_k is an orthonormal basis for the preconditioned residual directions,
+    // sigma_k is the upper triangular coefficients.
+    MatrixXd w_k, sigma_k;
+    compute_qr(L.triangularView<Eigen::Lower>().solve(R_k), w_k, sigma_k);
+
+    // (4) s_0 = L^{-T} w_0 (back substitution since L^T is upper triangular)
+    MatrixXd s_k = L.transpose().triangularView<Eigen::Upper>().solve(w_k);
+
+    // (5) Loop until convergence, I may need to add max iters
+    MatrixXd X_k = X_0;
+    const double b_sqnorm = B.squaredNorm();
+    while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) {
+        // (6) xi_{k-1} = (s_{k-1}^T A s_{k-1})^{-1}
+        MatrixXd As_k = A * s_k;
+        MatrixXd xi_k = (s_k.transpose() * As_k).inverse();
+
+        // (7) x_k = x_{k-1} + s_{k-1} * xi_{k-1} * sigma_{k-1}
+        X_k = X_k + s_k * xi_k * sigma_k;
+
+        // (8) [w_{k}, zeta_k] = qr(w_{k-1} - L^{-1} A s_{k-1} xi_{k-1})
+        MatrixXd L_inv_As = L.triangularView<Eigen::Lower>().solve(As_k);
+        MatrixXd w_kp1, zeta_k;
+        compute_qr(w_k - L_inv_As * xi_k, w_kp1, zeta_k);
+
+        // (9) s_k = L^{-T} w_k + s_{k-1} * zeta_k^T
+        MatrixXd s_kp1 =
+            L.transpose().triangularView<Eigen::Upper>().solve(w_kp1) + s_k * zeta_k.transpose();
+
+        // (10) sigma_k = zeta_k * sigma_{k-1}
+        MatrixXd sigma_kp1 = zeta_k * sigma_k;
+
+        // Update residual: R_k = B - A * X_k
+        R_k = B - A * X_k;
+
+        // Shift for next iteration
+        w_k = w_kp1;
+        s_k = s_kp1;
+        sigma_k = sigma_kp1;
+    }
+
+    return X_k;
 }

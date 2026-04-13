@@ -56,6 +56,16 @@ int main(int argc, char** argv)
             const MatrixXd X = solve_bcg(A, B, EPSILON);
             printf("BCG residual norm: %e\n", (A * X - B).norm());
         }
+        else if (mode == "pbcg") {
+            const MatrixXd B = MatrixXd::Random(n, m);
+            const MatrixXd X_0 = MatrixXd::Zero(n, m);
+
+            // TODO: pick a better preconditioner
+            Eigen::SimplicialLLT<SparseMatrix<double>> LLT(A);
+
+            const MatrixXd X = solve_preconditioned_bcg(A, B, X_0, LLT);
+            printf("PBCG residual norm: %e\n", (A * X - B).norm());
+        }
     }
     catch (const exception& e) {
         cerr << "Error: " << e.what() << '\n';

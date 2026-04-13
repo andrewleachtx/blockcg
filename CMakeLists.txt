@@ -11,7 +11,7 @@ target_include_directories(blockcg PRIVATE include)
 target_include_directories(blockcg SYSTEM PRIVATE vendor vendor/mmio)
 
 target_compile_options(blockcg PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Werror -pedantic>
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -pedantic>
 )
 
 add_subdirectory(vendor/eigen EXCLUDE_FROM_ALL)

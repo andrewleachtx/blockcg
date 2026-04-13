@@ -18,5 +18,6 @@ AccessModifierOffset: -4
 PointerAlignment: Left
 ReferenceAlignment: Left
 ReflowComments: false
+AlignTrailingComments: false
 SpaceBeforeCpp11BracedList: true
 Cpp11BracedListStyle: false
