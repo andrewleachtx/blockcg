@@ -37,32 +37,21 @@ int main(int argc, char** argv) {
     try {
         const SparseMatrix<double> A = load_matrix_market(matrix_path);
         const int n = static_cast<int>(A.cols());
+        const int m = 3; // Just hardcoded for now
 
         printf("Running mode: %s\n", mode.c_str());
 
         if (mode == "cg") {
-            int m = 3;
             const MatrixXd B = MatrixXd::Random(n, m);
             const MatrixXd X = solve_cg_per_b(A, B, EPSILON);
 
             // fun fact %e is exponential or scientific notation, e.g., 2.943301e-08
             printf("CG residual norm: %e\n", (A * X - B).norm());
         }
-
-        if (mode == "bcg") {
-            // Block CG with m=3 right hand sides
-            int m = 3;
-            const MatrixXd B = MatrixXd::Random(A.cols(), m);
+        else if (mode == "bcg") {
+            const MatrixXd B = MatrixXd::Random(n, m);
             const MatrixXd X = solve_bcg(A, B, EPSILON);
-            cout << "BCG error norm: " << (A * X - B).norm() << '\n';
-            for (int i = 0; i < 10; i++) {
-                cout << "row " << i << ": " << X.row(i) << '\n';
-            }
-            MatrixXd calc_B = A * X;
-            cout << "computed B:\n";
-            for (int i = 0; i < 10; i++) {
-                cout << "row " << i << ": " << calc_B.row(i) << '\n';
-            }
+            printf("BCG residual norm: %e\n", (A * X - B).norm());
         }
     }
     catch (const exception& e) {

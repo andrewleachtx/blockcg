@@ -69,8 +69,8 @@ VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b,
 // For each column b in B, run cg_solve(..., b, ...)
 MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B,
                         double tol) {
-    const int n { static_cast<int>(A.rows()) },
-        m { static_cast<int>(B.cols()) };
+    const int n = A.rows();
+    const int m = B.cols();
     MatrixXd X(n, m);
 
     // No preconditioner == let Minv = I
@@ -94,33 +94,50 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B,
 
 // Based on Algorithm 4 - no preconditioner.
 MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B,
-                   double tol) { //, const Eigen::MatrixXd& x0
+                   double tol) {
+    const int n = A.cols();
+    const int m = B.cols();
 
-    int n = A.cols();
-    int m = B.cols();
-    ///k=0
+    // Basically, now that we have multiple righthand sides, we extend our vectors in basic CG to
+    // n x m or m x m size. For each of m columns, there is one RHS / soln vector. This makes sense:
+    // x_k, r_k, p_k are now n x m instead of just n x 1
+    // phi_k, gamma_k=alpha_k, and delta_k are all m x m, which is a bit confusing, but when we do
+    // X_{k+1} = X_k + P_k * bigalpha_k we have
+    // n x m = n x m * ??? => we need ??? to be m x m - but also another reason, which is that Block CG
+    // will mix m columns together, which I'm not sure on why or how
+
+    // Setup
     MatrixXd x_k = MatrixXd::Zero(n, m);
     MatrixXd r_k = B - A * x_k;
-    // phi = I: Hestenes and Stiefel version. Choosing a better phi can avoid breakdown in rank deficient cases
+
+    // phi = I (no update): Hestenes and Stiefel version. Choosing a better phi can avoid breakdown in rank deficient cases
     MatrixXd phi_k = MatrixXd::Identity(m, m);
     MatrixXd p_k = r_k * phi_k;
+
+    // Same idea as CG in matrix form, but .squaredNorm() is basically just our Frobenius norm squared.
+    // The Frobenius norm being the sum squared residual per entry i, j in the matrix.
     while (r_k.squaredNorm() > tol * tol * B.squaredNorm()) {
-        //step size matrix mxm because coupling along search directions
-        // solve is more efficient than inverting
+        // Save old, r_k minus 1
         MatrixXd r_km1 = r_k;
+
+        // Block version of step size computation. Phi_k = I, so nothing really happens here.
+        // Solving is better than doing (denominator inverse) * numerator
         MatrixXd gamma_k =
             (p_k.transpose() * A * p_k)
                 .lu()
                 .solve(phi_k.transpose() * r_km1.transpose() * r_km1);
-        // update x_k
+
+        // Same CG updates, matrix form. Move the whole block along based on the new alpha block.
         x_k = x_k + p_k * gamma_k;
-        /// update residual
         r_k = r_k - A * p_k * gamma_k;
-        //compute next search directions
-        MatrixXd rtr_km1 = r_km1.transpose() * r_km1; // m×m
-        MatrixXd rtr_k = r_k.transpose() * r_k;       // m×m
+
+        // R_{k-1}^T * R_{k-1} and R_k^T * R_k
+        MatrixXd rtr_km1 = r_km1.transpose() * r_km1;
+        MatrixXd rtr_k = r_k.transpose() * r_k;
+
         MatrixXd delta_k = phi_k.lu().solve(rtr_km1.lu().solve(rtr_k));
         p_k = (r_k + p_k * delta_k) * phi_k;
     }
+
     return x_k;
 }
