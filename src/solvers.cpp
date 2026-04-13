@@ -1,30 +1,62 @@
 #include "solvers.h"
-using namespace Eigen;
+using Eigen::SparseMatrix, Eigen::VectorXd, Eigen::MatrixXd;
 
-// Not block at all - b is a single vector
+// Standard preconditioned conjugate gradient from Chen's pseudocode. x_0 is always 0.
 VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b,
                   const SparseMatrix<double>& M_inv, double tol) {
-    int n = A.cols();
-    VectorXd x_k = VectorXd::Zero(n);
-    VectorXd r_k = b - A * x_k;
-    VectorXd h_k = M_inv * r_k;
-    double delta_0 = (r_k.transpose() * h_k).value();
+    const int n = A.cols();
+
+    // Setup
+    VectorXd x_k = VectorXd::Zero(n); // current guess
+    VectorXd r_k = b - A * x_k;       // current residual, always b - Ax_k
+    VectorXd h_k = M_inv * r_k;       // preconditioned residual
+    double delta_0 =
+        (r_k.transpose() * h_k).value(); // basically r_k dot preconditioned r_k
     double delta_k = delta_0;
-    VectorXd p_k = h_k;
+    VectorXd p_k = h_k; // current search direction
+
+    // Iterate until error delta_k reduces below tolerance
     while (delta_k > tol * tol * delta_0) {
-        //A*search direction - used for step size
+        // We need to know how far along our search direction p_k to step
+        // A * search direction gives us a vector s_k to be used in step size calc
         VectorXd s_k = A * p_k;
-        // step size to get as close as possible along the search direction p_k
+
+        // If we do p_k^T * A * p_k and get a small value, we know there isn't much
+        // change in the linear system for this step, and so we can take a large
+        // step. That said, if p_k^T * A * p_k is large, it means A * p_k has diverged
+        // such that we should take smaller steps here. Note that if p_k and s_k were
+        // at a 90 degree angle, this would be a big difference, and cause a zero.
+        // But this is supposed to be positive definite, and that would be a violation:
+        // x^T Ax > 0 is the requirement.
         double alpha_k = delta_k / (p_k.transpose() * s_k).value();
-        // take step (core cg step, stepping conjugate to all other steps)
+
+        // Apply step, x_{k+1} = x_k + step size * search direction
         VectorXd x_kp1 = x_k + alpha_k * p_k;
-        // residual update without recomputing A
+
+        // Update the residual, b - Ax_{k+1} would work, but this requires a spmv
+        // so simplify: r_{k+1} = b - A(x_k + a_k * p_k) = (b - Ax_k) - a_k * A * p_k
+        // = r_k - a_k * s_k
         VectorXd r_kp1 = r_k - alpha_k * s_k;
+
+        // Apply the preconditioner again to get our preconditioned residual
+        // we need a "preconditioned residual" in the first place because
+        // r_k is the negative gradient, and thus iterating based on it would
+        // try to take us straight to the path of minimizing error. The idea is
+        // the preconditioner (idk how) gives us more information about our optimization
+        // step, so that we do not zigzag
         VectorXd h_kp1 = M_inv * r_kp1;
+
+        // Update err
         double delta_kp1 = (r_kp1.transpose() * h_kp1).value();
-        //update next search direction
-        VectorXd p_kp1 = h_kp1 + delta_kp1 / delta_k * p_k;
-        // update to new k
+
+        // Update the search space using the new mixed residual search direction h_pk1.
+        // This also uses the old search direction p_k to some extent, which is
+        // weighted by how much our error has changed. If the new error is much less,
+        // we want to follow the h_kp1 more - but if the new error is actually more, we
+        // do not want to follow this search direction.
+        VectorXd p_kp1 = h_kp1 + ((delta_kp1 / delta_k) * p_k);
+
+        // Update for next iteration
         p_k = p_kp1;
         delta_k = delta_kp1;
         x_k = x_kp1;
@@ -60,8 +92,7 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B,
     return X;
 }
 
-// Based on Algorithm 4
-/// no preconditioning
+// Based on Algorithm 4 - no preconditioner.
 MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B,
                    double tol) { //, const Eigen::MatrixXd& x0
 
