@@ -1,9 +1,11 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 UseTab: Never
+ColumnLimit: 100
+AlignAfterOpenBracket: BlockIndent
 BreakBeforeBraces: Custom
 BraceWrapping:
-  AfterFunction: false
+  AfterFunction: true
   AfterClass: false
   AfterControlStatement: false
   AfterEnum: false

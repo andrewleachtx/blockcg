@@ -13,7 +13,8 @@ extern "C" {
 
 namespace {
 
-[[noreturn]] void fail_with_file(FILE* f, const std::string& message) {
+[[noreturn]] void fail_with_file(FILE* f, const std::string& message)
+{
     if (f != nullptr) {
         fclose(f);
     }
@@ -22,7 +23,8 @@ namespace {
 
 } // namespace
 
-Eigen::SparseMatrix<double> load_matrix_market(const std::string& path) {
+Eigen::SparseMatrix<double> load_matrix_market(const std::string& path)
+{
     FILE* f = fopen(path.c_str(), "r");
     if (f == nullptr) {
         throw std::runtime_error("could not open file: " + path);
@@ -34,8 +36,10 @@ Eigen::SparseMatrix<double> load_matrix_market(const std::string& path) {
     }
 
     if (!mm_is_matrix(matcode) || !mm_is_sparse(matcode)) {
-        fail_with_file(f, "only sparse Matrix Market matrices are supported: " +
-                              std::string(mm_typecode_to_str(matcode)));
+        fail_with_file(
+            f, "only sparse Matrix Market matrices are supported: " +
+                   std::string(mm_typecode_to_str(matcode))
+        );
     }
 
     if (mm_is_complex(matcode)) {
@@ -53,8 +57,7 @@ Eigen::SparseMatrix<double> load_matrix_market(const std::string& path) {
     const bool is_pattern = mm_is_pattern(matcode);
     const bool is_integer = mm_is_integer(matcode);
 
-    std::cout << "Loading " << path << ": " << rows << "x" << cols << ", "
-              << entries << " entries";
+    std::cout << "Loading " << path << ": " << rows << "x" << cols << ", " << entries << " entries";
     if (is_symmetric) {
         std::cout << " (symmetric)";
     }
@@ -64,8 +67,9 @@ Eigen::SparseMatrix<double> load_matrix_market(const std::string& path) {
     std::cout << '\n';
 
     std::vector<Eigen::Triplet<double>> triplets;
-    triplets.reserve(is_symmetric ? static_cast<size_t>(entries) * 2
-                                  : static_cast<size_t>(entries));
+    triplets.reserve(
+        is_symmetric ? static_cast<size_t>(entries) * 2 : static_cast<size_t>(entries)
+    );
 
     for (int idx = 0; idx < entries; ++idx) {
         int row = 0;
@@ -107,8 +111,8 @@ Eigen::SparseMatrix<double> load_matrix_market(const std::string& path) {
     matrix.setFromTriplets(triplets.begin(), triplets.end());
     matrix.makeCompressed();
 
-    std::cout << "Loaded: " << matrix.rows() << "x" << matrix.cols() << ", "
-              << matrix.nonZeros() << " nonzeros after expansion\n";
+    std::cout << "Loaded: " << matrix.rows() << "x" << matrix.cols() << ", " << matrix.nonZeros()
+              << " nonzeros after expansion\n";
 
     return matrix;
 }

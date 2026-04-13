@@ -2,16 +2,17 @@
 using Eigen::SparseMatrix, Eigen::VectorXd, Eigen::MatrixXd;
 
 // Standard preconditioned conjugate gradient from Chen's pseudocode. x_0 is always 0.
-VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b,
-                  const SparseMatrix<double>& M_inv, double tol) {
+VectorXd cg_solve(
+    const SparseMatrix<double>& A, const VectorXd& b, const SparseMatrix<double>& M_inv, double tol
+)
+{
     const int n = A.cols();
 
     // Setup
-    VectorXd x_k = VectorXd::Zero(n); // current guess
-    VectorXd r_k = b - A * x_k;       // current residual, always b - Ax_k
-    VectorXd h_k = M_inv * r_k;       // preconditioned residual
-    double delta_0 =
-        (r_k.transpose() * h_k).value(); // basically r_k dot preconditioned r_k
+    VectorXd x_k = VectorXd::Zero(n);                 // current guess
+    VectorXd r_k = b - A * x_k;                       // current residual, always b - Ax_k
+    VectorXd h_k = M_inv * r_k;                       // preconditioned residual
+    double delta_0 = (r_k.transpose() * h_k).value(); // basically r_k dot preconditioned r_k
     double delta_k = delta_0;
     VectorXd p_k = h_k; // current search direction
 
@@ -67,8 +68,8 @@ VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b,
 }
 
 // For each column b in B, run cg_solve(..., b, ...)
-MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B,
-                        double tol) {
+MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
+{
     const int n = A.rows();
     const int m = B.cols();
     MatrixXd X(n, m);
@@ -93,8 +94,8 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B,
 }
 
 // Based on Algorithm 4 - no preconditioner.
-MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B,
-                   double tol) {
+MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
+{
     const int n = A.cols();
     const int m = B.cols();
 
@@ -123,9 +124,7 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B,
         // Block version of step size computation. Phi_k = I, so nothing really happens here.
         // Solving is better than doing (denominator inverse) * numerator
         MatrixXd gamma_k =
-            (p_k.transpose() * A * p_k)
-                .lu()
-                .solve(phi_k.transpose() * r_km1.transpose() * r_km1);
+            (p_k.transpose() * A * p_k).lu().solve(phi_k.transpose() * r_km1.transpose() * r_km1);
 
         // Same CG updates, matrix form. Move the whole block along based on the new alpha block.
         x_k = x_k + p_k * gamma_k;
@@ -140,4 +139,13 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B,
     }
 
     return x_k;
+}
+
+// Based on Alg. 7: Preconditioned DR-BCG
+MatrixXd solve_preconditioned_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
+{
+    const int n = A.rows();
+    const int m = B.cols();
+
+    // Algorithm 4 can let us
 }

@@ -8,15 +8,18 @@
 using Eigen::MatrixXd, Eigen::VectorXd, Eigen::SparseMatrix;
 using std::cerr, std::cout, std::cin, std::endl, std::string, std::exception;
 
-static bool ends_with_mtx(const string& s) {
+static bool ends_with_mtx(const string& s)
+{
     return s.size() >= 4 && s.compare(s.size() - 4, 4, ".mtx") == 0;
 }
 
-static bool is_valid_mode(const string& mode) {
+static bool is_valid_mode(const string& mode)
+{
     return mode == "cg" || mode == "bcg" || mode == "pbcg";
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv)
+{
     if (argc != 3) {
         cerr << "Usage: ./blockcg <mode=cg|bcg|pbcg> <matrix.mtx>\n";
         return 1;
