@@ -15,7 +15,7 @@ static bool ends_with_mtx(const string& s)
 
 static bool is_valid_mode(const string& mode)
 {
-    return mode == "cg" || mode == "bcg" || mode == "pbcg";
+    return mode == "cg" ||mode == "pcg" || mode == "bcg" || mode == "pbcg";
 }
 
 int main(int argc, char** argv)
@@ -43,13 +43,19 @@ int main(int argc, char** argv)
         const int m = 3; // Just hardcoded for now
 
         printf("Running mode: %s\n", mode.c_str());
-
         if (mode == "cg") {
             const MatrixXd B = MatrixXd::Random(n, m);
             const MatrixXd X = solve_cg_per_b(A, B, EPSILON);
 
             // fun fact %e is exponential or scientific notation, e.g., 2.943301e-08
             printf("CG residual norm: %e\n", (A * X - B).norm());
+        }
+        else if (mode == "pcg") {
+            const MatrixXd B = MatrixXd::Random(n, m);
+            const MatrixXd X = solve_pcg_per_b(A, B, EPSILON);
+
+            // fun fact %e is exponential or scientific notation, e.g., 2.943301e-08
+            printf("PCG residual norm: %e\n", (A * X - B).norm());
         }
         else if (mode == "bcg") {
             const MatrixXd B = MatrixXd::Random(n, m);

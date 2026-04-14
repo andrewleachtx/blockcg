@@ -5,12 +5,20 @@
 #include "defines.h"
 
 Eigen::VectorXd cg_solve(
+    const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& b, double tol
+);
+
+Eigen::VectorXd preconditioned_cg_solve(
     const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& b,
     const Eigen::SparseMatrix<double>& M_inv, double tol
 );
 
 Eigen::MatrixXd
 solve_cg_per_b(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, double tol);
+
+
+Eigen::MatrixXd
+solve_pcg_per_b(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, double tol);
 
 Eigen::MatrixXd
 solve_bcg(const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, double tol);
