@@ -54,7 +54,6 @@ int main(int argc, char** argv)
             const MatrixXd B = MatrixXd::Random(n, m);
             const MatrixXd X = solve_pcg_per_b(A, B, EPSILON);
 
-            // fun fact %e is exponential or scientific notation, e.g., 2.943301e-08
             printf("PCG residual norm: %e\n", (A * X - B).norm());
         }
         else if (mode == "bcg") {

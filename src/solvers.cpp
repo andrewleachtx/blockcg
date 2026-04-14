@@ -1,11 +1,9 @@
 #include "solvers.h"
 using Eigen::SparseMatrix, Eigen::VectorXd, Eigen::MatrixXd;
 
-VectorXd cg_solve(
-    const SparseMatrix<double>& A, const VectorXd& b, double tol
-)
+VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b, double tol)
 {
-     const int n = A.cols();
+    const int n = A.cols();
 
     // Setup
     VectorXd x_k = VectorXd::Zero(n); // current guess
@@ -37,7 +35,6 @@ VectorXd cg_solve(
         // = r_k - a_k * s_k
         VectorXd r_kp1 = r_k - alpha_k * s_k;
 
-
         // Update err
         double delta_kp1 = (r_kp1.transpose() * r_kp1).value();
 
@@ -56,7 +53,6 @@ VectorXd cg_solve(
     }
 
     return x_k;
-
 }
 
 // Standard preconditioned conjugate gradient from Chen's pseudocode. x_0 is always 0.
@@ -250,8 +246,9 @@ Eigen::MatrixXd solve_preconditioned_bcg(
     MatrixXd R_k = B - A * X_0;
 
     // (3) [w_0, sigma_0] = qr(L^{-1} R_0)
-    // w_k is an orthonormal basis for the preconditioned residual directions,
-    // sigma_k is the upper triangular coefficients.
+    // To clarify why we want QR, essentially in Block CG we can get a rank-deficient block,
+    // and blow up. So QR gets W * Sigma with W orthonormal columns, and Sigma upper triangular.
+    // W provides no blowup and Sigma can give us the info we lost...
     MatrixXd w_k, sigma_k;
     compute_qr(L.triangularView<Eigen::Lower>().solve(R_k), w_k, sigma_k);
 
@@ -261,28 +258,48 @@ Eigen::MatrixXd solve_preconditioned_bcg(
     // (5) Loop until convergence, I may need to add max iters
     MatrixXd X_k = X_0;
     const double b_sqnorm = B.squaredNorm();
-    while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) {
+    while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) { // 2nm for R_k Fnorm
         // (6) xi_{k-1} = (s_{k-1}^T A s_{k-1})^{-1}
-        MatrixXd As_k = A * s_k;
-        MatrixXd xi_k = (s_k.transpose() * As_k).inverse();
+        // We need to store A * s_k to see how much our search direction has changed.
+        // Then make the m x m s_k^T A s_k inner-prdouct matrix to judge how much it
+        // has changed in each direction... xi_k is basically our Alpha_k
+        MatrixXd As_k = A * s_k; // spmv cost 2jnm = jnm
+        MatrixXd xi_k =
+            (s_k.transpose() * As_k).inverse(); // (mxn * nxm is 2mnm = nm^2) + m^3 = nm^2 + m^3
 
         // (7) x_k = x_{k-1} + s_{k-1} * xi_{k-1} * sigma_{k-1}
-        X_k = X_k + s_k * xi_k * sigma_k;
+        // Essentially the update in the direction s_k for our solution block X_k,
+        // weighted by xi_k * sigma_k, which is our step size matrix times our scaling
+        // matrix sigma_k. We did QR factorization to make the block basis orthonormal,
+        // and sigma_k just naturally stores the size and scaling info factored out by QR
+        X_k = X_k + s_k * xi_k * sigma_k; // 2nm^2 + 2nm^2 + nm = 4nm^2 + nm
 
         // (8) [w_{k}, zeta_k] = qr(w_{k-1} - L^{-1} A s_{k-1} xi_{k-1})
-        MatrixXd L_inv_As = L.triangularView<Eigen::Lower>().solve(As_k);
+        // First, we are solving LY = A * s_k where Y = L^{-1} * A * s_k without
+        // forming an inverse, because we have the L^{-1} in the first half of the
+        // preconditioner M = LL^T. This actually depedns on sparsity nnz of L.
+        // Next we have to recompute the QR factorization of our new preconditioned candidate block,
+        // which is based on the new search direction and preconditioner...
+        MatrixXd L_inv_As = L.triangularView<Eigen::Lower>().solve(As_k); // 2*nnz(L)*nm
         MatrixXd w_kp1, zeta_k;
-        compute_qr(w_k - L_inv_As * xi_k, w_kp1, zeta_k);
+        compute_qr(w_k - L_inv_As * xi_k, w_kp1, zeta_k); // nm^2
 
         // (9) s_k = L^{-T} w_k + s_{k-1} * zeta_k^T
+        // in (8) we formed a preconditioned block, now wetake that and multiply it by
+        // the old search direction scaled by a coefficient zeta_k representing how
+        // much we should care about s_k. 
+        // First we have another 2 * nnz(L) * nm for the solve, then for the
+        // s_k * zeta_k.tranpose() it would be 2nm^2, and to add nm. So
+        // 2*nnz(L)*nm + 2nm^2 + nm
         MatrixXd s_kp1 =
             L.transpose().triangularView<Eigen::Upper>().solve(w_kp1) + s_k * zeta_k.transpose();
 
         // (10) sigma_k = zeta_k * sigma_{k-1}
-        MatrixXd sigma_kp1 = zeta_k * sigma_k;
+        MatrixXd sigma_kp1 = zeta_k * sigma_k; // A dense (mxm * mxm) is approximately 2m^3
 
         // Update residual: R_k = B - A * X_k
-        R_k = B - A * X_k;
+        // But again, like in CG, we can simplify: R_k = R_{k-1} - A * s_k * xi_k * sigma_k
+        R_k = R_k - As_k * xi_k * sigma_k; // 4nm^2 + nm, which isf ar better than the 2jnm
 
         // Shift for next iteration
         w_k = w_kp1;
