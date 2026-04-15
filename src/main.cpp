@@ -48,9 +48,9 @@ void test_all(const SparseMatrix<double>& A) {
     const MatrixXd X_init = MatrixXd::Zero(n, m);
 
     // TODO: pick a better preconditioner
-    Eigen::SimplicialLLT<SparseMatrix<double>> LLT(A);
+    Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> IC(A);
 
-    const MatrixXd X_3 = solve_preconditioned_bcg(A, B, X_init, LLT, output_dir);
+    const MatrixXd X_3 = solve_preconditioned_bcg(A, B, X_init, IC, output_dir);
 }
 
 int main(int argc, char** argv)
@@ -82,7 +82,9 @@ int main(int argc, char** argv)
         std::ostringstream oss;
         oss << "./logs/single_run/" << mode <<"/" << std::put_time(std::localtime(&t), "%Y%m%d_%H%M%S");
 
-        std::filesystem::create_directory(oss.str());
+        if (mode != "test_all") {
+            std::filesystem::create_directory(oss.str());
+        }
         std::filesystem::path output_dir = oss.str();
 
         printf("Running mode: %s\n", mode.c_str());
@@ -109,9 +111,9 @@ int main(int argc, char** argv)
             const MatrixXd X_0 = MatrixXd::Zero(n, m);
 
             // TODO: pick a better preconditioner
-            Eigen::SimplicialLLT<SparseMatrix<double>> LLT(A);
+            Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> IC(A);
 
-            const MatrixXd X = solve_preconditioned_bcg(A, B, X_0, LLT, output_dir);
+            const MatrixXd X = solve_preconditioned_bcg(A, B, X_0, IC, output_dir);
             printf("PBCG residual norm: %e\n", (A * X - B).norm());
         }
         else if (mode == "test_all") {

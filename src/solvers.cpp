@@ -64,15 +64,26 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> cg_solve(const SparseM
 
 // Standard preconditioned conjugate gradient from Chen's pseudocode. x_0 is always 0.
 std::pair<VectorXd, std::vector<std::pair<double, long>>> preconditioned_cg_solve(
-    const SparseMatrix<double>& A, const VectorXd& b, const SparseMatrix<double>& M_inv, double tol
+    const SparseMatrix<double>& A, const VectorXd& b, const Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>>& IC, double tol
 )
 {
+
+        const auto& L = IC.matrixL();
+    const auto& scale = IC.scalingS();
+
+    // Helper lambda to apply M^{-1} = S L^{-T} L^{-1} S
+    auto apply_M_inv = [&](const VectorXd& v) -> VectorXd {
+        VectorXd scaled = scale.asDiagonal() * v;
+        VectorXd tmp = L.triangularView<Eigen::Lower>().solve(scaled);
+        return scale.asDiagonal() * L.transpose().triangularView<Eigen::Upper>().solve(tmp);
+    };
+
     const int n = A.cols();
 
     // Setup
     VectorXd x_k = VectorXd::Zero(n); // current guess
     VectorXd r_k = b - A * x_k; // current residual, always b - Ax_k
-    VectorXd h_k = M_inv * r_k; // preconditioned residual
+    VectorXd h_k = apply_M_inv( r_k); // preconditioned residual
     double delta_0 = (r_k.transpose() * h_k).value(); // basically r_k dot preconditioned r_k
     double delta_k = delta_0;
     VectorXd p_k = h_k; // current search direction
@@ -109,7 +120,7 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> preconditioned_cg_solv
         // try to take us straight to the path of minimizing error. The idea is
         // the preconditioner (idk how) gives us more information about our optimization
         // step, so that we do not zigzag or something like that
-        VectorXd h_kp1 = M_inv * r_kp1;
+        VectorXd h_kp1 = apply_M_inv(r_kp1);
 
         // Update err
         double delta_kp1 = (r_kp1.transpose() * h_kp1).value();
@@ -196,15 +207,13 @@ MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, doubl
     const int m = B.cols();
     MatrixXd X(n, m);
 
-    // No preconditioner == let Minv = I
-    SparseMatrix<double> I(n, n);
-    I.setIdentity();
+    Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> IC(A);
 
     std::vector<std::vector<std::pair<double, long>>> all_history(m);
     int max_iters = 0;
     for (int i = 0; i < m; i++) {
         VectorXd b = B.col(i);
-        auto [x_b, history] = preconditioned_cg_solve(A, b, I, tol);
+        auto [x_b, history] = preconditioned_cg_solve(A, b, IC, tol);
 
         /*
             Block CG gives us an X of form x0 | x1 | x2 | ... | x_m
@@ -333,10 +342,13 @@ static void compute_qr(const MatrixXd& Z, MatrixXd& Q, MatrixXd& R)
 // Based on Alg. 7: Preconditioned DR-BCG
 Eigen::MatrixXd solve_preconditioned_bcg(
     const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, const Eigen::MatrixXd& X_0,
-    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& LLT, std::filesystem::path log_dir
+    const Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>>& IC,
+std::filesystem::path log_dir
 )
 {
-    SparseMatrix<double> L = LLT.matrixL();
+    const int m = B.cols();
+    const auto& L = IC.matrixL();
+    const auto& scale = IC.scalingS();
 
     // Algorithm 4 can be implemented with a preconditioner, but this is a different approach.
     // First off, M = LL^T requires a Cholesky factorized preconditioner, which is also SPD.
@@ -352,10 +364,10 @@ Eigen::MatrixXd solve_preconditioned_bcg(
     // and blow up. So QR gets W * Sigma with W orthonormal columns, and Sigma upper triangular.
     // W provides no blowup and Sigma can give us the info we lost...
     MatrixXd w_k, sigma_k;
-    compute_qr(L.triangularView<Eigen::Lower>().solve(R_k), w_k, sigma_k);
+    compute_qr(L.triangularView<Eigen::Lower>().solve(scale.asDiagonal() * R_k), w_k, sigma_k);
 
     // (4) s_0 = L^{-T} w_0 (back substitution since L^T is upper triangular)
-    MatrixXd s_k = L.transpose().triangularView<Eigen::Upper>().solve(w_k);
+    MatrixXd s_k = scale.asDiagonal() * L.transpose().triangularView<Eigen::Upper>().solve(w_k);
 
     // (5) Loop until convergence, I may need to add max iters
     MatrixXd X_k = X_0;
@@ -366,14 +378,15 @@ Eigen::MatrixXd solve_preconditioned_bcg(
     auto solve_start = std::chrono::high_resolution_clock::now();
     
     int iter = 0;
-    while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) { // 2nm for R_k Fnorm
+while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) { // 2nm for R_k Fnorm
         // (6) xi_{k-1} = (s_{k-1}^T A s_{k-1})^{-1}
         // We need to store A * s_k to see how much our search direction has changed.
         // Then make the m x m s_k^T A s_k inner-prdouct matrix to judge how much it
         // has changed in each direction... xi_k is basically our Alpha_k
         MatrixXd As_k = A * s_k; // spmv cost 2jnm = jnm
-        MatrixXd xi_k =
-            (s_k.transpose() * As_k).inverse(); // (mxn * nxm is 2mnm = nm^2) + m^3 = nm^2 + m^3
+        MatrixXd G_k = s_k.transpose() * As_k;
+        Eigen::LDLT<MatrixXd> G_ldlt(G_k);
+        MatrixXd xi_k = G_ldlt.solve(MatrixXd::Identity(m, m)); // solve instead of forming an inverse directly
 
         // (7) x_k = x_{k-1} + s_{k-1} * xi_{k-1} * sigma_{k-1}
         // Essentially the update in the direction s_k for our solution block X_k,
@@ -388,7 +401,7 @@ Eigen::MatrixXd solve_preconditioned_bcg(
         // preconditioner M = LL^T. This actually depedns on sparsity nnz of L.
         // Next we have to recompute the QR factorization of our new preconditioned candidate block,
         // which is based on the new search direction and preconditioner...
-        MatrixXd L_inv_As = L.triangularView<Eigen::Lower>().solve(As_k); // 2*nnz(L)*nm
+        MatrixXd L_inv_As = L.triangularView<Eigen::Lower>().solve(scale.asDiagonal() * As_k); // 2*nnz(L)*nm
         MatrixXd w_kp1, zeta_k;
         compute_qr(w_k - L_inv_As * xi_k, w_kp1, zeta_k); // nm^2
 
@@ -400,7 +413,7 @@ Eigen::MatrixXd solve_preconditioned_bcg(
         // s_k * zeta_k.tranpose() it would be 2nm^2, and to add nm. So
         // 2*nnz(L)*nm + 2nm^2 + nm
         MatrixXd s_kp1 =
-            L.transpose().triangularView<Eigen::Upper>().solve(w_kp1) + s_k * zeta_k.transpose();
+            scale.asDiagonal() * L.transpose().triangularView<Eigen::Upper>().solve(w_kp1) + s_k * zeta_k.transpose();
 
         // (10) sigma_k = zeta_k * sigma_{k-1}
         MatrixXd sigma_kp1 = zeta_k * sigma_k; // A dense (mxm * mxm) is approximately 2m^3
