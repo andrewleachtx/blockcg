@@ -7,13 +7,10 @@
 
 #include "defines.h"
 
-Eigen::VectorXd cg_solve(
-    const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& b, double tol
-);
+std::pair<Eigen::VectorXd, std::vector<std::pair<double, long>>> cg_solve(const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& b, double tol);
 
-Eigen::VectorXd preconditioned_cg_solve(
-    const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& b,
-    const Eigen::SparseMatrix<double>& M_inv, double tol
+std::pair<Eigen::VectorXd, std::vector<std::pair<double, long>>> preconditioned_cg_solve(
+    const Eigen::SparseMatrix<double>& A, const Eigen::VectorXd& b, const Eigen::SparseMatrix<double>& M_inv, double tol
 );
 
 Eigen::MatrixXd

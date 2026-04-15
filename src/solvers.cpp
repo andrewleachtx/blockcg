@@ -1,7 +1,7 @@
 #include "solvers.h"
 using Eigen::SparseMatrix, Eigen::VectorXd, Eigen::MatrixXd;
 
-VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b, double tol)
+std::pair<VectorXd, std::vector<std::pair<double, long>>> cg_solve(const SparseMatrix<double>& A, const VectorXd& b, double tol)
 {
     const int n = A.cols();
 
@@ -12,6 +12,9 @@ VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b, double tol)
     double delta_k = delta_0;
     VectorXd p_k = r_k; // current search direction
 
+
+    std::vector<std::pair<double, long>> history; // {residual, elapsed_us}
+    auto solve_start = std::chrono::high_resolution_clock::now();
     // Iterate until error delta_k reduces below tolerance
     while (delta_k > tol * tol * delta_0) {
         // We need to know how far along our search direction p_k to step
@@ -50,13 +53,17 @@ VectorXd cg_solve(const SparseMatrix<double>& A, const VectorXd& b, double tol)
         delta_k = delta_kp1;
         x_k = x_kp1;
         r_k = r_kp1;
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - solve_start
+        ).count();
+        history.push_back({r_k.norm(), elapsed});
     }
 
-    return x_k;
+    return {x_k, history};
 }
 
 // Standard preconditioned conjugate gradient from Chen's pseudocode. x_0 is always 0.
-VectorXd preconditioned_cg_solve(
+std::pair<VectorXd, std::vector<std::pair<double, long>>> preconditioned_cg_solve(
     const SparseMatrix<double>& A, const VectorXd& b, const SparseMatrix<double>& M_inv, double tol
 )
 {
@@ -70,6 +77,9 @@ VectorXd preconditioned_cg_solve(
     double delta_k = delta_0;
     VectorXd p_k = h_k; // current search direction
 
+    // logging setup
+    std::vector<std::pair<double, long>> history; // {residual, elapsed_us}
+    auto solve_start = std::chrono::high_resolution_clock::now();
     // Iterate until error delta_k reduces below tolerance
     while (delta_k > tol * tol * delta_0) {
         // We need to know how far along our search direction p_k to step
@@ -116,9 +126,15 @@ VectorXd preconditioned_cg_solve(
         delta_k = delta_kp1;
         x_k = x_kp1;
         r_k = r_kp1;
+
+        // logging
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - solve_start
+    ).count();
+    history.push_back({r_k.norm(), elapsed});
     }
 
-    return x_k;
+    return {x_k, history};
 }
 
 // For each column b in B, run cg_solve(..., b, ...)
@@ -128,9 +144,11 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double
     const int m = B.cols();
     MatrixXd X(n, m);
 
+    std::vector<std::vector<std::pair<double, long>>> all_history(m);
+    int max_iters = 0;
     for (int i = 0; i < m; i++) {
         VectorXd b = B.col(i);
-        VectorXd x_b = cg_solve(A, b, tol);
+        auto [x_b, history] = cg_solve(A, b, tol);
 
         /*
             Block CG gives us an X of form x0 | x1 | x2 | ... | x_m
@@ -138,7 +156,36 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double
             through each column b
         */
         X.col(i) = x_b;
+        all_history[i] = history;
+        max_iters = std::max(max_iters, (int)history.size());
     }
+    std::ofstream csv(log_dir / "cg_per_b_log.csv");
+    csv << "iteration,avg_residual,avg_elapsed_us\n";
+    double avg_residual = 0.0;
+    double total_elapsed = 0.0;
+    for (int iter = 0; iter < max_iters; iter++) {
+        avg_residual = 0.0;
+        double avg_elapsed = 0.0;
+        int elapsed_count = 0;
+        for (int i = 0; i < m; i++) {
+            int idx = std::min(iter, (int)all_history[i].size() - 1);   
+            avg_residual += all_history[i][idx].first;
+            if (iter < (int)all_history[i].size()) {
+                avg_elapsed += all_history[i][iter].second;
+                elapsed_count++;
+            }
+            if (iter == (int)all_history[i].size()-1) {
+                total_elapsed += all_history[i][iter].second;
+            }
+        }
+        avg_residual /= m;
+        avg_elapsed  /= (elapsed_count > 0 ? elapsed_count : 1);
+        csv << iter << "," << avg_residual << "," << avg_elapsed << "\n";
+    }
+
+            // final logging
+
+    csv << "final," << avg_residual << "," << total_elapsed << "\n";
 
     return X;
 }
@@ -153,9 +200,11 @@ MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, doubl
     SparseMatrix<double> I(n, n);
     I.setIdentity();
 
+    std::vector<std::vector<std::pair<double, long>>> all_history(m);
+    int max_iters = 0;
     for (int i = 0; i < m; i++) {
         VectorXd b = B.col(i);
-        VectorXd x_b = preconditioned_cg_solve(A, b, I, tol);
+        auto [x_b, history] = preconditioned_cg_solve(A, b, I, tol);
 
         /*
             Block CG gives us an X of form x0 | x1 | x2 | ... | x_m
@@ -163,7 +212,35 @@ MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, doubl
             through each column b
         */
         X.col(i) = x_b;
+        all_history[i] = history;
+        max_iters = std::max(max_iters, (int)history.size());
     }
+    // final logging
+    std::ofstream csv(log_dir / "pcg_per_b_log.csv");
+    csv << "iteration,avg_residual,avg_elapsed_us\n";
+    double avg_residual = 0.0;
+    double total_elapsed = 0.0;
+    for (int iter = 0; iter < max_iters; iter++) {
+        avg_residual = 0.0;
+        double avg_elapsed = 0.0;
+        int elapsed_count = 0;
+        for (int i = 0; i < m; i++) {
+            int idx = std::min(iter, (int)all_history[i].size() - 1);   
+            avg_residual += all_history[i][idx].first;
+            if (iter < (int)all_history[i].size()) {
+                avg_elapsed += all_history[i][iter].second;
+                elapsed_count++;
+            }
+            if (iter == (int)all_history[i].size()-1) {
+                total_elapsed += all_history[i][iter].second;
+            }
+        }
+        avg_residual /= m;
+        avg_elapsed  /= (elapsed_count > 0 ? elapsed_count : 1);
+        csv << iter << "," << avg_residual << "," << avg_elapsed << "\n";
+    }
+
+    csv << "final," << avg_residual << "," << total_elapsed << "\n";
 
     return X;
 }
@@ -191,7 +268,7 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol,
     MatrixXd p_k = r_k * phi_k;
 
     std::ofstream csv(log_dir / "bcg_log.csv");
-    csv << "iteration,error,elapsed_ms\n";
+    csv << "iteration,residual,elapsed_us\n";
     auto solve_start = std::chrono::high_resolution_clock::now();
 
     int iter = 0;
@@ -207,6 +284,11 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol,
         MatrixXd gamma_k =
             (p_k.transpose() * A * p_k).lu().solve(phi_k.transpose() * r_km1.transpose() * r_km1);
 
+        // Actually quite interesting to show
+            // MatrixXd StAS = p_k.transpose() * A * p_k;
+            // Eigen::JacobiSVD<MatrixXd> svd(StAS);
+            // double cond = svd.singularValues()(0) / svd.singularValues()(svd.singularValues().size() - 1);
+            // std::cout << "iter " << iter << " cond(p^T A p) = " << cond << "\n";
         // Same CG updates, matrix form. Move the whole block along based on the new alpha block.
         x_k = x_k + p_k * gamma_k;
         r_k = r_k - A * p_k * gamma_k;
@@ -218,13 +300,13 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol,
         MatrixXd delta_k = phi_k.lu().solve(rtr_km1.lu().solve(rtr_k));
         p_k = (r_k + p_k * delta_k) * phi_k;
 
-        // logging
-    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::high_resolution_clock::now() - solve_start
-    ).count();
-        // log the norm of the residual matrix (something like an average of the solutions to the different columns of B)
-        csv << iter << "," << std::sqrt(r_k.squaredNorm()) << "," << elapsed << "\n";
-        iter++;
+            // logging
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - solve_start
+        ).count();
+            // log the norm of the residual matrix (something like an average of the solutions to the different columns of B)
+            csv << iter << "," << std::sqrt(r_k.squaredNorm()) << "," << elapsed << "\n";
+            iter++;
     }
 
     // final logging
@@ -278,6 +360,12 @@ Eigen::MatrixXd solve_preconditioned_bcg(
     // (5) Loop until convergence, I may need to add max iters
     MatrixXd X_k = X_0;
     const double b_sqnorm = B.squaredNorm();
+
+    std::ofstream csv(log_dir / "pbcg_log.csv");
+    csv << "iteration,residual,elapsed_us\n";
+    auto solve_start = std::chrono::high_resolution_clock::now();
+    
+    int iter = 0;
     while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) { // 2nm for R_k Fnorm
         // (6) xi_{k-1} = (s_{k-1}^T A s_{k-1})^{-1}
         // We need to store A * s_k to see how much our search direction has changed.
@@ -325,7 +413,21 @@ Eigen::MatrixXd solve_preconditioned_bcg(
         w_k = w_kp1;
         s_k = s_kp1;
         sigma_k = sigma_kp1;
+
+                    // logging
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - solve_start
+        ).count();
+            // log the norm of the residual matrix (something like an average of the solutions to the different columns of B)
+            csv << iter << "," << std::sqrt(R_k.squaredNorm()) << "," << elapsed << "\n";
+            iter++;
     }
 
+    // final logging
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - solve_start
+    ).count();
+    csv << "final," << std::sqrt(R_k.squaredNorm()) << "," << elapsed << "\n";
+    
     return X_k;
 }
