@@ -122,7 +122,7 @@ VectorXd preconditioned_cg_solve(
 }
 
 // For each column b in B, run cg_solve(..., b, ...)
-MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
+MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double tol, std::filesystem::path log_dir)
 {
     const int n = A.rows();
     const int m = B.cols();
@@ -143,7 +143,7 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double
     return X;
 }
 
-MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
+MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double tol, std::filesystem::path log_dir)
 {
     const int n = A.rows();
     const int m = B.cols();
@@ -169,7 +169,7 @@ MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, doubl
 }
 
 // Based on Algorithm 4 - no preconditioner.
-MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
+MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol, std::filesystem::path log_dir)
 {
     const int n = A.cols();
     const int m = B.cols();
@@ -189,6 +189,12 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
     // phi = I (no update): Hestenes and Stiefel version. Choosing a better phi can avoid breakdown in rank deficient cases
     MatrixXd phi_k = MatrixXd::Identity(m, m);
     MatrixXd p_k = r_k * phi_k;
+
+    std::ofstream csv(log_dir / "bcg_log.csv");
+    csv << "iteration,error,elapsed_ms\n";
+    auto solve_start = std::chrono::high_resolution_clock::now();
+
+    int iter = 0;
 
     // Same idea as CG in matrix form, but .squaredNorm() is basically just our Frobenius norm squared.
     // The Frobenius norm being the sum squared residual per entry i, j in the matrix.
@@ -211,7 +217,21 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol)
 
         MatrixXd delta_k = phi_k.lu().solve(rtr_km1.lu().solve(rtr_k));
         p_k = (r_k + p_k * delta_k) * phi_k;
+
+        // logging
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - solve_start
+    ).count();
+        // log the norm of the residual matrix (something like an average of the solutions to the different columns of B)
+        csv << iter << "," << std::sqrt(r_k.squaredNorm()) << "," << elapsed << "\n";
+        iter++;
     }
+
+    // final logging
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - solve_start
+    ).count();
+    csv << "final," << std::sqrt(r_k.squaredNorm()) << "," << elapsed << "\n";
 
     return x_k;
 }
@@ -231,7 +251,7 @@ static void compute_qr(const MatrixXd& Z, MatrixXd& Q, MatrixXd& R)
 // Based on Alg. 7: Preconditioned DR-BCG
 Eigen::MatrixXd solve_preconditioned_bcg(
     const Eigen::SparseMatrix<double>& A, const Eigen::MatrixXd& B, const Eigen::MatrixXd& X_0,
-    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& LLT
+    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& LLT, std::filesystem::path log_dir
 )
 {
     SparseMatrix<double> L = LLT.matrixL();
