@@ -13,13 +13,14 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> cg_solve(const SparseM
     VectorXd p_k = r_k; // current search direction
 
 
-    std::vector<std::pair<double, long>> history; // {residual, elapsed_ms}
+    std::vector<std::pair<double, long>> history; // {resid_squared_norm, elapsed_ms}
     auto solve_start = std::chrono::high_resolution_clock::now();
-    // Iterate until error delta_k reduces below tolerance
+    // Iterate until error delta_k reduces below tolerance.
+    // Per-iteration cost: jn + 8n (see per_iteration_cost.cpp).
     while (delta_k > tol * tol * delta_0) {
         // We need to know how far along our search direction p_k to step
         // A * search direction gives us a vector s_k to be used in step size calc
-        VectorXd s_k = A * p_k;
+        VectorXd s_k = A * p_k;                                     // jn (SpMV)
 
         // If we do p_k^T * A * p_k and get a small value, we know there isn't much
         // change in the linear system for this step, and so we can take a large
@@ -28,25 +29,25 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> cg_solve(const SparseM
         // at a 90 degree angle, this would be a big difference, and cause a zero.
         // But this is supposed to be positive definite, and that would be a violation:
         // x^T Ax > 0 is te definition of positive definiteness.
-        double alpha_k = delta_k / (p_k.transpose() * s_k).value();
+        double alpha_k = delta_k / (p_k.transpose() * s_k).value(); // n
 
         // Apply step, x_{k+1} = x_k + step size * search direction
-        VectorXd x_kp1 = x_k + alpha_k * p_k;
+        VectorXd x_kp1 = x_k + alpha_k * p_k;                       // 2n
 
         // Update the residual, b - Ax_{k+1} would work, but this requires a spmv
         // so simplify: r_{k+1} = b - A(x_k + a_k * p_k) = (b - Ax_k) - a_k * A * p_k
         // = r_k - a_k * s_k
-        VectorXd r_kp1 = r_k - alpha_k * s_k;
+        VectorXd r_kp1 = r_k - alpha_k * s_k;                       // 2n
 
         // Update err
-        double delta_kp1 = (r_kp1.transpose() * r_kp1).value();
+        double delta_kp1 = (r_kp1.transpose() * r_kp1).value();     // n
 
         // Update the search space using the new mixed residual search direction h_pk1.
         // This also uses the old search direction p_k to some extent, which is
         // weighted by how much our error has changed. If the new error is much less,
         // we want to follow the h_kp1 more - but if the new error is actually more, we
         // do not want to follow this search direction.
-        VectorXd p_kp1 = r_kp1 + ((delta_kp1 / delta_k) * p_k);
+        VectorXd p_kp1 = r_kp1 + ((delta_kp1 / delta_k) * p_k);     // 2n
 
         // Update for next iteration
         p_k = p_kp1;
@@ -56,7 +57,8 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> cg_solve(const SparseM
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - solve_start
         ).count();
-        history.push_back({r_k.norm(), elapsed});
+        double resid_squared_norm = r_k.squaredNorm();
+        history.push_back({resid_squared_norm, elapsed});
     }
 
     return {x_k, history};
@@ -89,13 +91,14 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> preconditioned_cg_solv
     VectorXd p_k = h_k; // current search direction
 
     // logging setup
-    std::vector<std::pair<double, long>> history; // {residual, elapsed_ms}
+    std::vector<std::pair<double, long>> history; // {resid_squared_norm, elapsed_ms}
     auto solve_start = std::chrono::high_resolution_clock::now();
-    // Iterate until error delta_k reduces below tolerance
+    // Iterate until error delta_k reduces below tolerance.
+    // Per-iteration cost: jn + 2*nnz(L) + 10n (see per_iteration_cost.cpp).
     while (delta_k > tol * tol * delta_0) {
         // We need to know how far along our search direction p_k to step
         // A * search direction gives us a vector s_k to be used in step size calc
-        VectorXd s_k = A * p_k;
+        VectorXd s_k = A * p_k;                                     // jn (SpMV)
 
         // If we do p_k^T * A * p_k and get a small value, we know there isn't much
         // change in the linear system for this step, and so we can take a large
@@ -104,33 +107,34 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> preconditioned_cg_solv
         // at a 90 degree angle, this would be a big difference, and cause a zero.
         // But this is supposed to be positive definite, and that would be a violation:
         // x^T Ax > 0 is te definition of positive definiteness.
-        double alpha_k = delta_k / (p_k.transpose() * s_k).value();
+        double alpha_k = delta_k / (p_k.transpose() * s_k).value(); // n
 
         // Apply step, x_{k+1} = x_k + step size * search direction
-        VectorXd x_kp1 = x_k + alpha_k * p_k;
+        VectorXd x_kp1 = x_k + alpha_k * p_k;                       // 2n
 
         // Update the residual, b - Ax_{k+1} would work, but this requires a spmv
         // so simplify: r_{k+1} = b - A(x_k + a_k * p_k) = (b - Ax_k) - a_k * A * p_k
         // = r_k - a_k * s_k
-        VectorXd r_kp1 = r_k - alpha_k * s_k;
+        VectorXd r_kp1 = r_k - alpha_k * s_k;                       // 2n
 
         // Apply the preconditioner again to get our preconditioned residual
         // we need a "preconditioned residual" in the first place because
         // r_k is the negative gradient, and thus iterating based on it would
         // try to take us straight to the path of minimizing error. The idea is
         // the preconditioner (idk how) gives us more information about our optimization
-        // step, so that we do not zigzag or something like that
-        VectorXd h_kp1 = apply_M_inv(r_kp1);
+        // step, so that we do not zigzag or something like that.
+        // M_inv = S * L^{-T} * L^{-1} * S: 2 triangular solves + 2 diagonal scales.
+        VectorXd h_kp1 = apply_M_inv(r_kp1);                        // 2 * nnz(L) + 2n (IC(0))
 
         // Update err
-        double delta_kp1 = (r_kp1.transpose() * h_kp1).value();
+        double delta_kp1 = (r_kp1.transpose() * h_kp1).value();     // n
 
         // Update the search space using the new mixed residual search direction h_pk1.
         // This also uses the old search direction p_k to some extent, which is
         // weighted by how much our error has changed. If the new error is much less,
         // we want to follow the h_kp1 more - but if the new error is actually more, we
         // do not want to follow this search direction.
-        VectorXd p_kp1 = h_kp1 + ((delta_kp1 / delta_k) * p_k);
+        VectorXd p_kp1 = h_kp1 + ((delta_kp1 / delta_k) * p_k);     // 2n
 
         // Update for next iteration
         p_k = p_kp1;
@@ -140,9 +144,10 @@ std::pair<VectorXd, std::vector<std::pair<double, long>>> preconditioned_cg_solv
 
         // logging
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::high_resolution_clock::now() - solve_start
-    ).count();
-    history.push_back({r_k.norm(), elapsed});
+            std::chrono::high_resolution_clock::now() - solve_start
+        ).count();
+        double resid_squared_norm = r_k.squaredNorm();
+        history.push_back({resid_squared_norm, elapsed});
     }
 
     return {x_k, history};
@@ -171,16 +176,19 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double
         max_iters = std::max(max_iters, (int)history.size());
     }
     std::ofstream csv(log_dir / "cg_per_b_log.csv");
-    csv << "iteration,avg_residual,avg_elapsed_ms\n";
-    double avg_residual = 0.0;
+    csv << "iteration,residual,avg_elapsed_ms\n";
+    double residual = 0.0;
     double total_elapsed = 0.0;
     for (int iter = 0; iter < max_iters; iter++) {
-        avg_residual = 0.0;
+        double resid_squared_norm_sum = 0.0;
         double avg_elapsed = 0.0;
         int elapsed_count = 0;
         for (int i = 0; i < m; i++) {
+            if (all_history[i].empty()) {
+                continue;
+            }
             int idx = std::min(iter, (int)all_history[i].size() - 1);   
-            avg_residual += all_history[i][idx].first;
+            resid_squared_norm_sum += all_history[i][idx].first;
             if (iter < (int)all_history[i].size()) {
                 avg_elapsed += all_history[i][iter].second;
                 elapsed_count++;
@@ -189,14 +197,14 @@ MatrixXd solve_cg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, double
                 total_elapsed += all_history[i][iter].second;
             }
         }
-        avg_residual /= m;
+        residual = std::sqrt(resid_squared_norm_sum);
         avg_elapsed  /= (elapsed_count > 0 ? elapsed_count : 1);
-        csv << iter << "," << avg_residual << "," << avg_elapsed << "\n";
+        csv << iter << "," << residual << "," << avg_elapsed << "\n";
     }
 
-            // final logging
+    // final logging
 
-    csv << "final," << avg_residual << "," << total_elapsed << "\n";
+    csv << "final," << residual << "," << total_elapsed << "\n";
 
     return X;
 }
@@ -226,16 +234,19 @@ MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, doubl
     }
     // final logging
     std::ofstream csv(log_dir / "pcg_per_b_log.csv");
-    csv << "iteration,avg_residual,avg_elapsed_ms\n";
-    double avg_residual = 0.0;
+    csv << "iteration,residual,avg_elapsed_ms\n";
+    double residual = 0.0;
     double total_elapsed = 0.0;
     for (int iter = 0; iter < max_iters; iter++) {
-        avg_residual = 0.0;
+        double resid_squared_norm_sum = 0.0;
         double avg_elapsed = 0.0;
         int elapsed_count = 0;
         for (int i = 0; i < m; i++) {
+            if (all_history[i].empty()) {
+                continue;
+            }
             int idx = std::min(iter, (int)all_history[i].size() - 1);   
-            avg_residual += all_history[i][idx].first;
+            resid_squared_norm_sum += all_history[i][idx].first;
             if (iter < (int)all_history[i].size()) {
                 avg_elapsed += all_history[i][iter].second;
                 elapsed_count++;
@@ -244,12 +255,12 @@ MatrixXd solve_pcg_per_b(const SparseMatrix<double>& A, const MatrixXd& B, doubl
                 total_elapsed += all_history[i][iter].second;
             }
         }
-        avg_residual /= m;
+        residual = std::sqrt(resid_squared_norm_sum);
         avg_elapsed  /= (elapsed_count > 0 ? elapsed_count : 1);
-        csv << iter << "," << avg_residual << "," << avg_elapsed << "\n";
+        csv << iter << "," << residual << "," << avg_elapsed << "\n";
     }
 
-    csv << "final," << avg_residual << "," << total_elapsed << "\n";
+    csv << "final," << residual << "," << total_elapsed << "\n";
 
     return X;
 }
@@ -284,6 +295,7 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol,
 
     // Same idea as CG in matrix form, but .squaredNorm() is basically just our Frobenius norm squared.
     // The Frobenius norm being the sum squared residual per entry i, j in the matrix.
+    // Per-iteration cost: 2njm + 9nm^2 + 3nm + (8/3)m^3 + 3m^2 (see per_iteration_cost.cpp).
     while (r_k.squaredNorm() > tol * tol * B.squaredNorm()) {
         // Save old, r_k minus 1
         MatrixXd r_km1 = r_k;
@@ -292,6 +304,7 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol,
         // Solving is better than doing (denominator inverse) * numerator
         MatrixXd gamma_k =
             (p_k.transpose() * A * p_k).lu().solve(phi_k.transpose() * r_km1.transpose() * r_km1);
+            // njm + nm^2 + (2/3)m^3 + m^2 + 2nm^2
 
         // Actually quite interesting to show
             // MatrixXd StAS = p_k.transpose() * A * p_k;
@@ -299,15 +312,15 @@ MatrixXd solve_bcg(const SparseMatrix<double>& A, const MatrixXd& B, double tol,
             // double cond = svd.singularValues()(0) / svd.singularValues()(svd.singularValues().size() - 1);
             // std::cout << "iter " << iter << " cond(p^T A p) = " << cond << "\n";
         // Same CG updates, matrix form. Move the whole block along based on the new alpha block.
-        x_k = x_k + p_k * gamma_k;
-        r_k = r_k - A * p_k * gamma_k;
+        x_k = x_k + p_k * gamma_k;                                  // nm + nm^2
+        r_k = r_k - A * p_k * gamma_k;                              // nm + njm + nm^2
 
         // R_{k-1}^T * R_{k-1} and R_k^T * R_k
-        MatrixXd rtr_km1 = r_km1.transpose() * r_km1;
-        MatrixXd rtr_k = r_k.transpose() * r_k;
+        MatrixXd rtr_km1 = r_km1.transpose() * r_km1;               // nm^2
+        MatrixXd rtr_k = r_k.transpose() * r_k;                     // nm^2
 
-        MatrixXd delta_k = phi_k.lu().solve(rtr_km1.lu().solve(rtr_k));
-        p_k = (r_k + p_k * delta_k) * phi_k;
+        MatrixXd delta_k = phi_k.lu().solve(rtr_km1.lu().solve(rtr_k)); // 2m^3 + 2m^2
+        p_k = (r_k + p_k * delta_k) * phi_k;                        // nm + 2nm^2
 
             // logging
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -378,49 +391,53 @@ std::filesystem::path log_dir
     auto solve_start = std::chrono::high_resolution_clock::now();
     
     int iter = 0;
-while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) { // 2nm for R_k Fnorm
+    // Per-iteration cost: 2jnm + 4*nnz(L)*m + 14nm^2 + 3m^3 + 7nm (see per_iteration_cost.cpp).
+    while (R_k.squaredNorm() > EPSILON * EPSILON * b_sqnorm) {      // 2nm for R_k Fnorm
         // (6) xi_{k-1} = (s_{k-1}^T A s_{k-1})^{-1}
         // We need to store A * s_k to see how much our search direction has changed.
         // Then make the m x m s_k^T A s_k inner-prdouct matrix to judge how much it
         // has changed in each direction... xi_k is basically our Alpha_k
-        MatrixXd As_k = A * s_k; // spmv cost 2jnm = jnm
-        MatrixXd G_k = s_k.transpose() * As_k;
-        Eigen::LDLT<MatrixXd> G_ldlt(G_k);
-        MatrixXd xi_k = G_ldlt.solve(MatrixXd::Identity(m, m)); // solve instead of forming an inverse directly
+        MatrixXd As_k = A * s_k;                                    // 2jnm (SpMM)
+        MatrixXd G_k = s_k.transpose() * As_k;                      // 2nm^2
+        Eigen::LDLT<MatrixXd> G_ldlt(G_k);                          // (1/3)m^3 LDLT factor
+        MatrixXd xi_k = G_ldlt.solve(MatrixXd::Identity(m, m));     // m^3 solve for inverse
 
         // (7) x_k = x_{k-1} + s_{k-1} * xi_{k-1} * sigma_{k-1}
         // Essentially the update in the direction s_k for our solution block X_k,
         // weighted by xi_k * sigma_k, which is our step size matrix times our scaling
         // matrix sigma_k. We did QR factorization to make the block basis orthonormal,
         // and sigma_k just naturally stores the size and scaling info factored out by QR
-        X_k = X_k + s_k * xi_k * sigma_k; // 2nm^2 + 2nm^2 + nm = 4nm^2 + nm
+        X_k = X_k + s_k * xi_k * sigma_k;                           // 4nm^2 + nm
 
         // (8) [w_{k}, zeta_k] = qr(w_{k-1} - L^{-1} A s_{k-1} xi_{k-1})
-        // First, we are solving LY = A * s_k where Y = L^{-1} * A * s_k without
-        // forming an inverse, because we have the L^{-1} in the first half of the
-        // preconditioner M = LL^T. This actually depedns on sparsity nnz of L.
+        // First, we are solving L Y = S A s_k where Y = L^{-1} S A s_k without forming
+        // an inverse, because we have the L^{-1} in the first half of the IC(0)
+        // preconditioner M = S L L^T S. Cost depends on nnz(L). We also pay nm for
+        // the diagonal scaling S before the solve.
         // Next we have to recompute the QR factorization of our new preconditioned candidate block,
         // which is based on the new search direction and preconditioner...
-        MatrixXd L_inv_As = L.triangularView<Eigen::Lower>().solve(scale.asDiagonal() * As_k); // 2*nnz(L)*nm
+        MatrixXd L_inv_As = L.triangularView<Eigen::Lower>().solve(scale.asDiagonal() * As_k);
+                                                                    // nm + 2 * nnz(L) * m
         MatrixXd w_kp1, zeta_k;
-        compute_qr(w_k - L_inv_As * xi_k, w_kp1, zeta_k); // nm^2
+        compute_qr(w_k - L_inv_As * xi_k, w_kp1, zeta_k);           // 2nm^2 + O(nm^2) QR
 
-        // (9) s_k = L^{-T} w_k + s_{k-1} * zeta_k^T
-        // in (8) we formed a preconditioned block, now wetake that and multiply it by
+        // (9) s_k = S L^{-T} w_k + s_{k-1} * zeta_k^T
+        // in (8) we formed a preconditioned block, now we take that and multiply it by
         // the old search direction scaled by a coefficient zeta_k representing how
-        // much we should care about s_k. 
-        // First we have another 2 * nnz(L) * nm for the solve, then for the
-        // s_k * zeta_k.tranpose() it would be 2nm^2, and to add nm. So
-        // 2*nnz(L)*nm + 2nm^2 + nm
+        // much we should care about s_k.
+        // First we have another 2 * nnz(L) * m for the L^{-T} solve and nm for the
+        // diagonal scale S, then s_k * zeta_k.transpose() is 2nm^2, and the final
+        // add is nm. So: 2 * nnz(L) * m + 2nm^2 + 2nm
         MatrixXd s_kp1 =
-            scale.asDiagonal() * L.transpose().triangularView<Eigen::Upper>().solve(w_kp1) + s_k * zeta_k.transpose();
+            scale.asDiagonal() * L.transpose().triangularView<Eigen::Upper>().solve(w_kp1)
+            + s_k * zeta_k.transpose();                             // 2 * nnz(L) * m + 2nm^2 + 2nm
 
         // (10) sigma_k = zeta_k * sigma_{k-1}
-        MatrixXd sigma_kp1 = zeta_k * sigma_k; // A dense (mxm * mxm) is approximately 2m^3
+        MatrixXd sigma_kp1 = zeta_k * sigma_k;                      // 2m^3
 
         // Update residual: R_k = B - A * X_k
         // But again, like in CG, we can simplify: R_k = R_{k-1} - A * s_k * xi_k * sigma_k
-        R_k = R_k - As_k * xi_k * sigma_k; // 4nm^2 + nm, which isf ar better than the 2jnm
+        R_k = R_k - As_k * xi_k * sigma_k;                          // 4nm^2 + nm (skips another SpMM)
 
         // Shift for next iteration
         w_k = w_kp1;

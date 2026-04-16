@@ -34,11 +34,12 @@ void test_all(const SparseMatrix<double>& A) {
     std::ostringstream oss;
     oss << "./logs/XCG_batches_" << std::put_time(std::localtime(&t), "%Y%m%d_%H%M%S");
 
-    std::filesystem::create_directory(oss.str());
+    std::filesystem::create_directories(oss.str());
     std::filesystem::path output_dir = oss.str();
 
     const int n = static_cast<int>(A.cols());
     const int m = 3; // Just hardcoded for now
+    printf("Using m = %d right-hand sides\n", m);
     const MatrixXd B = MatrixXd::Random(n, m);
 
 
@@ -83,11 +84,14 @@ int main(int argc, char** argv)
         oss << "./logs/single_run/" << mode <<"/" << std::put_time(std::localtime(&t), "%Y%m%d_%H%M%S");
 
         if (mode != "test_all") {
-            std::filesystem::create_directory(oss.str());
+            std::filesystem::create_directories(oss.str());
         }
         std::filesystem::path output_dir = oss.str();
 
         printf("Running mode: %s\n", mode.c_str());
+        if (mode != "test_all") {
+            printf("Using m = %d right-hand sides\n", m);
+        }
         if (mode == "cg") {
             const MatrixXd B = MatrixXd::Random(n, m);
             const MatrixXd X = solve_cg_per_b(A, B, EPSILON, output_dir);
@@ -133,5 +137,3 @@ int main(int argc, char** argv)
     // TODO compare cg, bcg, pbcg
     return 0;
 }
-
-
